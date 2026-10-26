@@ -8,11 +8,11 @@ services:
     healthCheckPath: /health
     envVars:
       - key: LLM_BASE_URL
-        value: https://openrouter.ai/api/v1
+        value: https://api.deepseek.com
       - key: LLM_API_KEY
         sync: false
       - key: LLM_MODEL
-        sync: false
+        value: deepseek-flash
       - key: APP_SECRET
         generateValue: true
       - key: SYSTEM_PROMPT

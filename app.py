@@ -9,9 +9,9 @@ from pydantic import BaseModel, Field
 
 APP_DIR = Path(__file__).resolve().parent
 DB_PATH = os.getenv("DATABASE_PATH", str(APP_DIR / "vex.db"))
-BASE_URL = os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
+BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com").rstrip("/")
 API_KEY = os.getenv("LLM_API_KEY", "")
-MODEL = os.getenv("LLM_MODEL", "")
+MODEL = os.getenv("LLM_MODEL", "deepseek-flash")
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", """Bạn là Vex, trợ lý AI chuyên lập trình. Trả lời bằng tiếng Việt tự nhiên, chính xác và thực dụng. Khi viết code, ưu tiên giải pháp chạy được, an toàn, dễ bảo trì và hiệu năng tốt. Dùng markdown và fenced code blocks có nhãn ngôn ngữ. Khi sửa lỗi, giải thích nguyên nhân ngắn gọn rồi đưa code đã sửa. Không bịa kết quả chạy thử.""")
 MAX_CHARS = int(os.getenv("MAX_MESSAGE_CHARS", "12000"))
 MAX_FILE_BYTES = int(os.getenv("MAX_FILE_BYTES", str(3 * 1024 * 1024)))
@@ -52,7 +52,24 @@ def init_db():
             created_at INTEGER NOT NULL,
             FOREIGN KEY(chat_id) REFERENCES chats(id)
         )""")
+        cols = {r[1] for r in con.execute("PRAGMA table_info(users)").fetchall()}
+        if "credits_remaining" not in cols:
+            con.execute("ALTER TABLE users ADD COLUMN credits_remaining INTEGER NOT NULL DEFAULT 20")
+        if "credits_day" not in cols:
+            con.execute("ALTER TABLE users ADD COLUMN credits_day TEXT NOT NULL DEFAULT ''")
 init_db()
+
+DAILY_CREDITS = int(os.getenv("DAILY_CREDITS", "20"))
+def credit_status(user_id: int):
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    with db() as con:
+        row = con.execute("SELECT credits_remaining,credits_day FROM users WHERE id=?", (user_id,)).fetchone()
+        if not row:
+            raise HTTPException(401, "Tài khoản không tồn tại.")
+        if row["credits_day"] != today:
+            con.execute("UPDATE users SET credits_remaining=?,credits_day=? WHERE id=?", (DAILY_CREDITS, today, user_id))
+            return {"credits": DAILY_CREDITS, "daily_credits": DAILY_CREDITS, "credits_reset": "00:00 UTC"}
+        return {"credits": row["credits_remaining"], "daily_credits": DAILY_CREDITS, "credits_reset": "00:00 UTC"}
 
 def password_hash(password: str, salt: Optional[bytes] = None) -> str:
     salt = salt or secrets.token_bytes(16)
@@ -104,6 +121,7 @@ class ChatBody(BaseModel):
     message: str = Field(min_length=1, max_length=MAX_CHARS)
     history: list[dict] = Field(default_factory=list, max_length=30)
     file_text: Optional[str] = Field(default=None, max_length=MAX_CHARS)
+    mode: str = Field(default="code", pattern="^(code|security)$")
 
 @app.get("/")
 def home():
@@ -122,8 +140,9 @@ def register(body: AuthBody):
         raise HTTPException(400, "Mật khẩu cần ít nhất 8 ký tự.")
     with db() as con:
         try:
-            cur = con.execute("INSERT INTO users(username,password_hash,created_at) VALUES(?,?,?)",
-                              (username, password_hash(body.password), int(time.time())))
+            today = time.strftime("%Y-%m-%d", time.gmtime())
+            cur = con.execute("INSERT INTO users(username,password_hash,created_at,credits_remaining,credits_day) VALUES(?,?,?,?,?)",
+                              (username, password_hash(body.password), int(time.time()), DAILY_CREDITS, today))
             uid = cur.lastrowid
         except sqlite3.IntegrityError:
             raise HTTPException(409, "Tên tài khoản đã được sử dụng.")
@@ -140,7 +159,7 @@ def login(body: AuthBody):
 
 @app.get("/api/me")
 def me(user=Depends(get_user)):
-    return user
+    return {**user, **credit_status(user["id"])}
 
 @app.get("/api/chats")
 def list_chats(user=Depends(get_user)):
@@ -197,6 +216,9 @@ def chat(body: ChatBody, user=Depends(get_user)):
     message = body.message.strip()
     if not message:
         raise HTTPException(400, "Tin nhắn đang trống.")
+    status = credit_status(user["id"])
+    if status["credits"] < 1:
+        raise HTTPException(429, "Bạn đã dùng hết credit hôm nay. Credit miễn phí sẽ làm mới lúc 00:00 UTC.")
     now = int(time.time())
     chat_id = body.chat_id
     with db() as con:
@@ -214,7 +236,12 @@ def chat(body: ChatBody, user=Depends(get_user)):
         history = con.execute("SELECT role,content FROM messages WHERE chat_id=? ORDER BY id DESC LIMIT 20", (chat_id,)).fetchall()
         history = list(reversed(history))
         con.execute("UPDATE chats SET updated_at=? WHERE id=?", (now, chat_id))
-    msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
+    mode_prompt = (
+        "\nChế độ hiện tại: VEX CODE. Ưu tiên viết, sửa, review, giải thích code; đưa giải pháp thực tế và kiểm tra giả định."
+        if body.mode == "code" else
+        "\nChế độ hiện tại: VEX SECURITY. Hỗ trợ CTF/lab, phân tích mã độc phòng thủ, threat modeling, rà soát lỗ hổng và kiểm thử hệ thống có quyền. Trình bày cách tái hiện trong môi trường được phép, tác động và biện pháp khắc phục. Không hướng dẫn đánh cắp thông tin đăng nhập, triển khai mã độc để gây hại, né tránh phát hiện nhằm xâm nhập trái phép hoặc tấn công mục tiêu không được phép; khi yêu cầu vượt giới hạn, chuyển sang cách kiểm thử/phòng thủ an toàn cụ thể."
+    )
+    msgs = [{"role": "system", "content": SYSTEM_PROMPT + mode_prompt}]
     for item in history:
         content = item["content"]
         if item["role"] == "user" and body.file_text and content == message:
@@ -248,4 +275,9 @@ def chat(body: ChatBody, user=Depends(get_user)):
         con.execute("INSERT INTO messages(chat_id,role,content,created_at) VALUES(?,?,?,?)",
                     (chat_id, "assistant", result, int(time.time())))
         con.execute("UPDATE chats SET updated_at=? WHERE id=?", (int(time.time()), chat_id))
-    return {"chat_id": chat_id, "reply": result}
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        row = con.execute("SELECT credits_remaining,credits_day FROM users WHERE id=?", (user["id"],)).fetchone()
+        remaining = DAILY_CREDITS if row["credits_day"] != today else row["credits_remaining"]
+        remaining = max(0, remaining - 1)
+        con.execute("UPDATE users SET credits_remaining=?,credits_day=? WHERE id=?", (remaining, today, user["id"]))
+    return {"chat_id": chat_id, "reply": result, "credits": remaining, "daily_credits": DAILY_CREDITS}

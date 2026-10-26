@@ -1,26 +1,25 @@
-# Vex Code AI — starter cho Render
+# Vex Code AI — DeepSeek Edition
 
-Chatbot lập trình tiếng Việt có đăng ký/đăng nhập, lịch sử chat, upload file văn bản/code, giao diện responsive và nút copy code.
+Khung chatbot tiếng Việt cho lập trình và an ninh mạng được phép, có đăng ký/đăng nhập, lịch sử chat, đính kèm file văn bản/code và nút chuyển Vex Code / Vex Security. Cấu hình mặc định dành cho DeepSeek API.
 
-## Triển khai nhanh trên Render
+## Triển khai trên Render
 
-1. Tải ZIP, giải nén và đẩy toàn bộ nội dung lên một GitHub repo mới.
-2. Trên Render chọn **New + → Web Service**, kết nối repo.
+1. Giải nén ZIP và đẩy thư mục `vex-code-ai-deepseek` lên GitHub repository của bạn.
+2. Tạo Web Service trên Render và kết nối repository.
 3. Build command: `pip install -r requirements.txt`
 4. Start command: `uvicorn app:app --host 0.0.0.0 --port $PORT`
-5. Environment:
-   - `LLM_BASE_URL` = `https://openrouter.ai/api/v1`
-   - `LLM_API_KEY` = API key riêng của bạn
-   - `LLM_MODEL` = ID model chính xác lấy từ danh sách model của nhà cung cấp
-   - `APP_SECRET` = chuỗi bí mật dài, ngẫu nhiên (Render có thể tạo tự động qua `render.yaml`)
-6. Deploy rồi mở URL Render.
+5. Environment Variables:
+   - `LLM_BASE_URL` = `https://api.deepseek.com`
+   - `LLM_API_KEY` = API key lấy từ https://platform.deepseek.com/ (giữ bí mật)
+   - `LLM_MODEL` = `deepseek-flash` (xác nhận model hiện được tài khoản hỗ trợ trong tài liệu chính thức)
+   - `APP_SECRET` = chuỗi bí mật dài, ngẫu nhiên; có thể để Render tạo theo `render.yaml`
+6. Deploy rồi thử đăng ký tài khoản và gửi tin nhắn.
 
-Bạn có thể dùng `render.yaml` để cấu hình service bằng Blueprint. Không đưa API key vào mã nguồn hoặc GitHub.
+Tài liệu chính thức: https://api-docs.deepseek.com/quick_start/agent_integrations/ . DeepSeek dùng định dạng API tương thích OpenAI.
 
-## Ghi chú quan trọng
+## Lưu ý
 
-- Cơ chế tài khoản ở bản starter dùng SQLite và mật khẩu băm bằng scrypt; token đăng nhập có thời hạn 14 ngày.
-- Trên dịch vụ free, hệ thống file/dữ liệu cục bộ có thể không bền vững khi redeploy/restart. Nếu dùng thật, hãy chuyển SQLite sang PostgreSQL và dùng persistent storage phù hợp.
-- Upload hiện hỗ trợ file văn bản/code UTF-8 tối đa 3 MB. PDF/DOCX/ZIP chưa được xử lý.
-- Đây là starter project, chưa phải nền tảng production: cần bổ sung email reset mật khẩu, xác minh email, giới hạn tốc độ theo tài khoản/IP, CSRF/CORS policy, logging/monitoring và kiểm thử bảo mật trước khi mở công khai.
-- Model AI, tốc độ và chi phí phụ thuộc nhà cung cấp/model và hạn mức tài khoản.
+- Không commit API key vào GitHub hoặc gửi key trong chat.
+- API có thể tính phí; kiểm tra giá/hạn mức trong tài khoản DeepSeek.
+- Bản starter dùng SQLite; dữ liệu local có thể không bền vững khi redeploy/restart trên môi trường free. Nên dùng PostgreSQL và giới hạn tốc độ trước khi mở cho nhiều người dùng.
+- Chưa tích hợp cổng thanh toán thật. Credits là khung cơ bản, không phải hệ thống thanh toán hoàn chỉnh.
